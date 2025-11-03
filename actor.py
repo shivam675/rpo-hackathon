@@ -16,7 +16,11 @@ with open("ip.yaml", 'r') as f:
 # ---------------------- MCP CLIENT ----------------------
 mcp_server_url = ips.get("mcp_server_url", "http://127.0.0.1:8000/sse")
 chat_server_url = ips.get("chat_server_url", "http://127.0.0.1:6060/api/messages")
+post_chat_url = ips.get("post_chat_url", "http://127.0.0.1:6060/api/chat")
 mcp_client = BasicMCPClient(mcp_server_url)
+
+# Shared action log for critic to monitor
+ACTION_LOG_FILE = "actor_actions.json"
 
 # ---------------------- FINNHUB CLIENT ----------------------
 finnhub_client = finnhub.Client(api_key="d44ajupr01qt371u4s5gd44ajupr01qt371u4s60")
@@ -63,7 +67,8 @@ def ollama_reason(prompt, conversation_history, custom_system_prompt=None):
     
     resp = ollama.chat(
         model="qwen2.5:7b",
-        messages=messages
+        messages=messages,
+        format="json"  # Force JSON output
     )
     return resp["message"]["content"]
 
@@ -74,7 +79,9 @@ async def call_mcp_tool(tool_name, args):
         res = await mcp_client.call_tool(tool_name, args)
         return res
     except Exception as e:
-        return {"error": str(e)}
+        print(f"❌ MCP Connection Error: {str(e)}")
+        print(f"   Make sure MCP server is running at: {mcp_server_url}")
+        return {"error": f"MCP server error: {str(e)}"}
 
 def parse_mcp_result(result):
     """Parse MCP result into readable format."""
@@ -104,6 +111,39 @@ def parse_mcp_result(result):
             return combined
     return result
 
+def log_action_for_critic(message: str, tool: str, args: dict, result: any):
+    """Log actions to file for critic to monitor."""
+    import os
+    from datetime import datetime
+    
+    action_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "message": message,
+        "tool": tool,
+        "args": args,
+        "result": str(result)[:500]  # Truncate long results
+    }
+    
+    # Read existing log
+    if os.path.exists(ACTION_LOG_FILE):
+        with open(ACTION_LOG_FILE, 'r') as f:
+            try:
+                log = json.load(f)
+            except:
+                log = []
+    else:
+        log = []
+    
+    # Append new action
+    log.append(action_entry)
+    
+    # Keep only last 50 actions
+    log = log[-50:]
+    
+    # Write back
+    with open(ACTION_LOG_FILE, 'w') as f:
+        json.dump(log, f, indent=2)
+
 # ---------------------- FINNHUB ANALYZER ----------------------
 def analyze_stock(symbol: str):
     """Fetch and display some live data for realism."""
@@ -131,12 +171,33 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
     chat_history.add_to_ollama_history("user", user_input)
     
     try:
+        # Clean up the response
+        decision_json = decision_json.strip()
+        
+        # Extract only the first complete JSON object
+        if "{" in decision_json:
+            start = decision_json.find("{")
+            # Find matching closing brace
+            brace_count = 0
+            end = start
+            for i, char in enumerate(decision_json[start:], start):
+                if char == "{":
+                    brace_count += 1
+                elif char == "}":
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end = i + 1
+                        break
+            
+            decision_json = decision_json[start:end]
+        
         decision = json.loads(decision_json)
         
         # Add assistant response to history
-        chat_history.add_to_ollama_history("assistant", decision_json)
+        chat_history.add_to_ollama_history("assistant", json.dumps(decision))
         
-        if "tool" not in decision:
+        # Check if empty response (no action needed)
+        if not decision or "tool" not in decision:
             return None
             
         tool = decision["tool"]
@@ -152,6 +213,9 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
         parsed_result = parse_mcp_result(result)
         print(f"✅ Result: {json.dumps(parsed_result, indent=2)}")
         
+        # Log action for critic to monitor
+        log_action_for_critic(user_input, tool, args, parsed_result)
+        
         # Add tool result to history so LLM knows what happened
         result_msg = f"Tool '{tool}' executed. Result: {json.dumps(parsed_result)}"
         chat_history.add_to_ollama_history("assistant", result_msg)
@@ -160,14 +224,34 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
         if tool == "list_portfolio" and "sell" in user_input.lower():
             print("🔄 Continuing to execute sell orders...")
             await asyncio.sleep(0.5)  # Brief pause
-            await get_ollama_decision(user_input, chat_history, custom_system_prompt)
+            
+            # Extract portfolio info
+            if isinstance(parsed_result, dict) and "portfolio" in parsed_result:
+                portfolio = parsed_result["portfolio"]
+                
+                # Sell each stock one by one
+                for stock_entry in portfolio:
+                    symbol = stock_entry[0]
+                    quantity = stock_entry[1]
+                    
+                    if quantity > 0:
+                        print(f"🔄 Selling {quantity} shares of {symbol}...")
+                        sell_result = await call_mcp_tool("sell_stock", {"symbol": symbol, "quantity": quantity})
+                        sell_parsed = parse_mcp_result(sell_result)
+                        print(f"✅ Sold: {json.dumps(sell_parsed, indent=2)}")
+                        
+                        # Log each sell action
+                        log_action_for_critic(user_input, "sell_stock", {"symbol": symbol, "quantity": quantity}, sell_parsed)
+                        await asyncio.sleep(0.3)  # Brief pause between sells
+                
+                print("✅ All stocks sold!")
         
         return parsed_result
         
-    except json.JSONDecodeError:
-        print(f"⚠️ LLM returned invalid JSON for message: '{user_input}'")
-        # Still add the response to history even if it's not valid JSON
-        chat_history.add_to_ollama_history("assistant", decision_json)
+    except json.JSONDecodeError as e:
+        print(f"⚠️ LLM returned invalid JSON")
+        print(f"   Raw response: {decision_json[:200]}")
+        print(f"   Error: {e}")
         return None
     except Exception as e:
         print(f"❌ Error processing decision: {e}")
@@ -177,9 +261,19 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
 async def fetch_chats_periodically(chat_history):
     """Monitor chat server and process trading messages."""
     while True:
-        latest_chat = await chat_history.get_latest_chat(chat_server_url)
-        
-        if "error" not in latest_chat:
+        try:
+            latest_chat = await chat_history.get_latest_chat(chat_server_url)
+            
+            if "error" in latest_chat:
+                print(f"⚠️ {latest_chat['error']}")
+                await asyncio.sleep(1)
+                continue
+            
+            # Check if messages exist and list is not empty
+            if "messages" not in latest_chat or not latest_chat["messages"]:
+                await asyncio.sleep(1)
+                continue
+            
             if latest_chat != chat_history.last_message:
                 chat_history.last_message = latest_chat
                 chat_history.count += 1
@@ -187,19 +281,82 @@ async def fetch_chats_periodically(chat_history):
                 # Get the latest message
                 latest_message = latest_chat['messages'][-1]
                 user = latest_message.get('user', 'Unknown')
+                
+                # Skip Guardian AI warning messages (but not rectification commands)
+                if user == "🛡️ GUARDIAN_AI" and not latest_message.get('text', '').startswith('@ACTOR_AI'):
+                    await asyncio.sleep(1)
+                    continue
+                    
                 text = latest_message.get('text', '')
+                
+                # Handle Guardian AI rectification commands
+                stripped_text = text.strip()
+                if user == "🛡️ GUARDIAN_AI" and stripped_text.lower().startswith('@actor_ai'):
+                    print(f"\n🛡️ Guardian AI Rectification: {stripped_text}")
+
+                    import re
+
+                    # Match patterns like:
+                    # @ACTOR_AI sell 80 MSFT ...
+                    # @ACTOR_AI buy back 80 MSFT ...
+                    rectification_regex = re.compile(
+                        r"@actor_ai\s+(buy(?:\s+back)?|sell)\s+(\d+)\s+([a-zA-Z]+)",
+                        re.IGNORECASE
+                    )
+
+                    match = rectification_regex.search(stripped_text)
+
+                    if not match:
+                        print("❌ Failed to parse rectification command: pattern not recognized")
+                        await asyncio.sleep(1)
+                        continue
+
+                    action_word, quantity_str, symbol = match.groups()
+                    symbol = symbol.upper()
+
+                    try:
+                        quantity = int(quantity_str)
+                    except ValueError:
+                        print("❌ Failed to parse rectification command: invalid quantity")
+                        await asyncio.sleep(1)
+                        continue
+
+                    tool_to_call = "sell_stock" if action_word.lower().startswith("sell") else "buy_stock"
+
+                    print(f"🔄 Executing rectification: {tool_to_call} quantity={quantity} symbol={symbol}")
+                    result = await call_mcp_tool(tool_to_call, {"symbol": symbol, "quantity": quantity})
+                    parsed_result = parse_mcp_result(result)
+                    print(f"✅ Rectification complete: {json.dumps(parsed_result, indent=2)}")
+                    log_action_for_critic(stripped_text, tool_to_call, {"symbol": symbol, "quantity": quantity}, parsed_result)
+                    
+                    await asyncio.sleep(1)
+                    continue
+                
+                # Skip other system commands
+                if text.startswith("@"):
+                    await asyncio.sleep(1)
+                    continue
                 
                 print(f"\n💬 Message #{chat_history.count} from {user}: {text}")
                 
                 # Process the message for trading actions with custom system prompt
                 await get_ollama_decision(text, chat_history, custom_system_prompt)
-        else:
-            print(f"⚠️ {latest_chat['error']}")
+                
+        except KeyError as e:
+            print(f"⚠️ Missing expected data in chat response: {e}")
+        except IndexError as e:
+            print(f"⚠️ Empty message list received")
+        except Exception as e:
+            print(f"❌ Unexpected error in chat monitoring: {e}")
             
         await asyncio.sleep(1)  # wait for 1 second before fetching again
 
 if __name__ == "__main__":
     print("🚀 Trading Agent Started - Monitoring chat for trading signals...")
+    print(f"📡 Chat Server: {chat_server_url}")
+    print(f"📡 MCP Server: {mcp_server_url}")
+    print(f"⚠️  Make sure MCP server is running: python mcp_server.py --server_type sse")
+    print()
     chat_history = ChatHistory()
     asyncio.run(fetch_chats_periodically(chat_history=chat_history))
     
