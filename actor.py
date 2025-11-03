@@ -66,7 +66,8 @@ def ollama_reason(prompt, conversation_history, custom_system_prompt=None):
     messages.append({"role": "user", "content": prompt})
     
     resp = ollama.chat(
-        model="qwen2.5:7b",
+        # model="qwen2.5:7b",
+        model="falcon3:10b",
         messages=messages,
         format="json"  # Force JSON output
     )

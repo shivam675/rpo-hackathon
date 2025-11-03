@@ -156,7 +156,8 @@ class CriticMonitor:
         """
         
         response = ollama.chat(
-            model="qwen2.5:7b",
+            # model="qwen2.5:7b",
+            model="falcon3:10b",
             messages=[
                 {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
                 {"role": "user", "content": context}
