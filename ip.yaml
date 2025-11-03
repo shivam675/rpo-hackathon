@@ -1,0 +1,2 @@
+chat_server_url: http://172.20.10.13:6060/api/messages
+actor_mcp_server_url: http://172.20.10.2:8000/sse
