@@ -1,0 +1,396 @@
+{
+  "name": "actor_AI",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "http://172.20.10.13:6060//api/messages",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -1520,
+        128
+      ],
+      "id": "fe3a771b-e805-47a7-886b-6a721b82ec16",
+      "name": "HTTP Request4",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gemma3:4b",
+          "mode": "list",
+          "cachedResultName": "gemma3:4b"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an extraction agent. Return STRICT JSON ONLY with keys: action (\"buy\",\"sell\",null), symbol (uppercase ticker or null), quantity (integer or null), reason (short string). If no buy/sell intent return {\"action\":null,\"symbol\":null,\"quantity\":null,\"reason\":\"no_intent\"}.\nExamples:\nInput: \"We must buy 30 apple stocks as they are at their 7 day lowest\" => {\"action\":\"buy\",\"symbol\":\"AAPL\",\"quantity\":30,\"reason\":\"7-day low\"}\nMessage: \"{{$json.text}}\""
+            }
+          ]
+        },
+        "simplify": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.ollama",
+      "typeVersion": 1,
+      "position": [
+        -944,
+        -48
+      ],
+      "id": "b27f77bc-00dd-4fe1-9b4d-f0cf40047dd7",
+      "name": "Message a model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "1Mx6uZb0y9fquJmB",
+          "name": "Ollama account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// robust filter using workflow static storage (timestamp-based)\nlet wfStatic;\ntry { wfStatic = this.getWorkflowStaticData('workflow'); } catch(e) { wfStatic = {}; }\nif (!wfStatic.lastTs) wfStatic.lastTs = 0;\n\nif (!items || items.length === 0) return [];\n\nconst payload = items[0].json || {};\nconst all = Array.isArray(payload.messages) ? payload.messages : [];\n\n// messages expected to have timestamp numeric ms or ISO string\nconst newMessages = [];\nfor (let i = 0; i < all.length; i++) {\n  const msg = all[i];\n  if (!msg) continue;\n  let t = null;\n  if (msg.timestamp && !isNaN(Number(msg.timestamp))) t = Number(msg.timestamp);\n  else if (msg.timestamp) {\n    const parsed = Date.parse(msg.timestamp);\n    if (!isNaN(parsed)) t = parsed;\n  } else {\n    // if no timestamp, assume new (but be cautious)\n    t = Date.now();\n  }\n  if (t > wfStatic.lastTs) {\n    newMessages.push(msg);\n    if (t > wfStatic.lastTs) wfStatic.lastTs = t;\n  }\n}\n\n// return each message as separate item for Split processing downstream\nreturn newMessages.map(m => ({ json: m }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        128
+      ],
+      "id": "509b1beb-3a53-482f-942b-345a7659777f",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1104,
+        128
+      ],
+      "id": "5e13b7d7-fbbf-495e-90ed-4fc387a96646",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me1",
+      "typeVersion": 1,
+      "position": [
+        -896,
+        128
+      ],
+      "id": "77a8b327-3a0c-4569-a3c0-16f54cc308f1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Ollama & Recover\n// Usage: place this Function node immediately after the Ollama HTTP node.\n// It expects the incoming item to contain:\n// - the raw model output (common places: items[0].json.message.content or items[0].json.text or items[0].json.output)\n// - the original chat message in items[0].json.text (or tries other common fields)\n\n// Small mapping of common company names -> tickers (extend as needed)\nconst NAME_TO_TICKER = {\n  'apple': 'AAPL',\n  'tesla': 'TSLA',\n  'google': 'GOOGL',\n  'alphabet': 'GOOGL',\n  'amazon': 'AMZN',\n  'microsoft': 'MSFT',\n  'meta': 'META',\n  'facebook': 'META',\n  'netflix': 'NFLX',\n  'nvidia': 'NVDA',\n  'intel': 'INTC',\n  'amd': 'AMD',\n  'bitcoin': 'BTC',\n  'doge': 'DOGE'\n};\n\nfunction extractModelText(obj) {\n  if (!obj) return '';\n  if (obj.message && (obj.message.content || obj.message.text)) return String(obj.message.content || obj.message.text);\n  if (obj.output) return String(obj.output);\n  if (obj.text) return String(obj.text);\n  // may be a nested 'message' array or other shape - stringify fallback\n  return JSON.stringify(obj);\n}\n\nfunction stripFences(s) {\n  if (!s) return '';\n  return s.replace(/^\\s*```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/i, '').trim();\n}\n\nfunction findFirstJsonBlock(s) {\n  if (!s) return null;\n  const m = s.match(/\\{[\\s\\S]*\\}/);\n  return m ? m[0] : null;\n}\n\nfunction safeParse(raw) {\n  if (!raw) return null;\n  try { return JSON.parse(raw); } catch (e) { return null; }\n}\n\nfunction findTickerInText(text) {\n  if (!text) return null;\n  // look for $TICKER or uppercase tickers\n  const dollarMatch = text.match(/\\$([A-Za-z]{1,6})\\b/);\n  if (dollarMatch) return dollarMatch[1].toUpperCase();\n  // look for uppercase ticker-like tokens\n  const upperMatch = text.match(/\\b([A-Z]{2,5})\\b/);\n  if (upperMatch) {\n    // validate not a common word; assume uppercase tokens are tickers\n    return upperMatch[1].toUpperCase();\n  }\n  // look for company name -> map to ticker\n  const words = text.toLowerCase().split(/[^a-z0-9]+/);\n  for (const w of words) {\n    if (w && NAME_TO_TICKER[w]) return NAME_TO_TICKER[w];\n    // handle simple plurals like 'apples' -> 'apple'\n    const wBase = w.replace(/s$/,'');\n    if (wBase && NAME_TO_TICKER[wBase]) return NAME_TO_TICKER[wBase];\n  }\n  return null;\n}\n\nfunction findActionInText(text) {\n  if (!text) return null;\n  const t = text.toLowerCase();\n  if (/\\b(buy|purchase|long)\\b/.test(t)) return 'buy';\n  if (/\\b(sell|short|dump)\\b/.test(t)) return 'sell';\n  return null;\n}\n\nfunction findQuantityInText(text) {\n  if (!text) return null;\n  // look for patterns: buy 10, buy ten, 10 shares, all, half\n  const numeric = text.match(/(?:\\b|,)(\\d{1,6})\\b/);\n  if (numeric) return parseInt(numeric[1],10);\n  if (/\\b(all|everything|all-in)\\b/i.test(text)) return 'ALL';\n  if (/\\b(half)\\b/i.test(text)) return 'HALF';\n  return null;\n}\n\n// Begin per-item processing\nconst out = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const input = items[i].json || {};\n  // get original chat text from common fields\n  const originalText = (input.text || input.message || input.msg || input.chat || input.chat_text || input.rawChat || '').toString();\n\n  // extract model reply text\n  const modelText = stripFences(extractModelText(input));\n  const jsonBlock = findFirstJsonBlock(modelText);\n  let parsed = safeParse(jsonBlock || modelText);\n\n  // initialize intent values\n  let action = null, symbol = null, quantity = null, reason = '';\n\n  if (parsed && typeof parsed === 'object') {\n    action = parsed.action ? String(parsed.action).toLowerCase() : null;\n    symbol = parsed.symbol ? String(parsed.symbol).toUpperCase().replace(/\\$/g,'') : null;\n    quantity = parsed.quantity !== undefined && parsed.quantity !== null ? parsed.quantity : null;\n    reason = parsed.reason ? String(parsed.reason) : '';\n  }\n\n  // FALLBACKS if any field missing: inspect original chat text\n  if (!action) action = findActionInText(originalText);\n  if (!symbol) {\n    // try to find $TICKER or uppercase TICKER or company name in modelText first, then originalText\n    symbol = findTickerInText(modelText) || findTickerInText(originalText);\n  }\n  if (!quantity) {\n    // numeric or keywords in modelText first, then original text\n    quantity = findQuantityInText(modelText) || findQuantityInText(originalText);\n  }\n\n  // If symbol is a company name (non-ticker) map via dictionary\n  if (symbol && !/^[A-Z]{1,6}$/.test(symbol)) {\n    const sLower = symbol.toLowerCase();\n    if (NAME_TO_TICKER[sLower]) symbol = NAME_TO_TICKER[sLower];\n    else symbol = symbol.toUpperCase().slice(0,6); // try a safe transform\n  }\n  // If symbol still null but we detected a company name earlier in words -> map\n  if (!symbol) {\n    const mapped = findTickerInText(originalText);\n    if (mapped) symbol = mapped;\n  }\n\n  // Normalize quantity: if 'ALL' or 'HALF' keep special markers; convert strings to ints if possible\n  if (typeof quantity === 'string') {\n    const q = quantity.toUpperCase();\n    if (q === 'ALL') quantity = 'ALL';\n    else if (q === 'HALF') quantity = 'HALF';\n    else {\n      const n = parseInt(quantity.replace(/[^\\d]/g,''),10);\n      quantity = !Number.isNaN(n) ? n : null;\n    }\n  } else if (quantity !== null && quantity !== undefined) {\n    const n = parseInt(quantity,10);\n    quantity = (!Number.isNaN(n) && n > 0) ? n : null;\n  }\n\n  // Build safe flag (partial): at this point symbol + action + (quantity may be special) desired\n  const safe = !!(action && symbol && (quantity || quantity === 0 || quantity === 'ALL' || quantity === 'HALF'));\n\n  out.push({\n    json: {\n      intent: { action: action || null, symbol: symbol || null, quantity: quantity === undefined ? null : quantity, reason: reason || '', safe: !!safe },\n      debug: { modelText, parsedJson: parsed, originalText }\n    }\n  });\n}\n\nreturn out;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        -48
+      ],
+      "id": "00f88191-fa42-46d6-9bd5-c790b8409f46",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "1041550e-0b43-4edf-ba61-74ac2cbb2022",
+                    "leftValue": "={{$json[\"intent\"] && $json[\"intent\"].action === \"buy\"}}",
+                    "rightValue": "buy",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "fd760b84-e488-4731-9dae-7aea334aca94",
+                    "leftValue": "={{$json[\"intent\"] && $json[\"intent\"].action === \"sell\"}}",
+                    "rightValue": "sell",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -384,
+        -48
+      ],
+      "id": "ab0857f4-ed1a-490e-a61d-dde0c9ae6941",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.20.10.13:9090/api/buy",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-api-key",
+              "value": "={{$env.TRADING_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"symbol\": \"{{$json.intent.symbol}}\",\n  \"quantity\": {{$json.intent.quantity}},\n  \"source\": \"ActorBot\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -224,
+        -160
+      ],
+      "id": "107a7c6b-5f81-4836-92dc-fa0bb691ba73",
+      "name": "HTTP Request5"
+    },
+    {
+      "parameters": {
+        "url": "=http://172.20.10.13:9090/api/sell",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"symbol\": \"{{$json.intent.symbol}}\",\n  \"quantity\": {{$json.intent.quantity}},\n  \"source\": \"ActorBot\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -224,
+        64
+      ],
+      "id": "ae803806-4b74-4777-9bfa-095014f78607",
+      "name": "HTTP Request6"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1728,
+        128
+      ],
+      "id": "d7fee4cf-de35-46b6-b20f-719b83108c04",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "url": "http://172.20.10.13:9090/api/portfolio",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        16,
+        -48
+      ],
+      "id": "9dc64970-c932-4dc9-b391-943083c2f919",
+      "name": "HTTP Request3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request4": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Replace Me1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request5",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request6": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request5": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "48b892c3-1df1-417a-9c41-9696abdef570",
+  "meta": {
+    "instanceId": "f7141c9e0dcea3afd3626a38be594971c94154f1f8dc7f4c27cf1694f35ca377"
+  },
+  "id": "b0Ga5xdzDZ1MUtsA",
+  "tags": []
+}
