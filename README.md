@@ -1,5 +1,7 @@
 # Multi-Agent Trading System with LLMs
 
+![System Demo](./demo.gif)
+
 This project implements a multi-agent system for simulated stock trading, featuring an interactive web dashboard, an autonomous trading "Actor" AI, and a "Critic" AI for oversight. The system is powered by local language models via Ollama and communicates using the Model Context Protocol (MCP).
 
 ## Architecture
