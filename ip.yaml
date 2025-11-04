@@ -1,3 +1,6 @@
-chat_server_url: http://192.168.1.114:6060/api/messages
-post_chat_url: http://192.168.1.114:6060/api/messages
+chat_server_url: http://127.0.0.1:7070/api/messages
+post_chat_url: http://127.0.0.1:7070/api/messages
 mcp_server_url: http://127.0.0.1:8000/sse
+flask_action_url: http://127.0.0.1:7070/api/actor_action
+langflow_url: http://127.0.0.1:7860
+langflow_flow_id: "ed9180e9-476d-4f9e-86b1-a83738961889"  # Replace with actual flow ID from Langflow GUI

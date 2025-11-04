@@ -5,6 +5,7 @@ from llama_index.tools.mcp import BasicMCPClient
 import finnhub
 import requests
 import yaml
+from datetime import datetime
 from SYSTEM_PROMPT import system_prompt, custom_system_prompt
 
 
@@ -112,11 +113,45 @@ def parse_mcp_result(result):
             return combined
     return result
 
+def send_action_to_flask(message: str, tool: str, args: dict, result: any):
+    """Send action data to Flask server for real-time display."""
+    try:
+        action_data = {
+            "timestamp": datetime.now().isoformat(),
+            "message": message,
+            "tool": tool,
+            "args": args,
+            "result": str(result)[:500],  # Truncate long results
+            "status": "success" if "error" not in str(result).lower() else "error"
+        }
+        
+        # Send to Flask server
+        flask_action_url = ips.get("flask_action_url", "http://127.0.0.1:7070/api/actor_action")
+        response = requests.post(
+            flask_action_url,
+            json=action_data,
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            print(f"📤 Action sent to Flask server successfully")
+        else:
+            print(f"⚠️ Flask server responded with status: {response.status_code}")
+            
+    except requests.RequestException as e:
+        print(f"⚠️ Failed to send action to Flask server: {e}")
+    except Exception as e:
+        print(f"⚠️ Error sending action to Flask: {e}")
+
 def log_action_for_critic(message: str, tool: str, args: dict, result: any):
-    """Log actions to file for critic to monitor."""
+    """Send actions to Flask server for real-time display and keep minimal file log for critic."""
     import os
     from datetime import datetime
     
+    # Send to Flask server for real-time display (primary method)
+    send_action_to_flask(message, tool, args, result)
+    
+    # Keep minimal file log only for critic monitoring (optional)
     action_entry = {
         "timestamp": datetime.now().isoformat(),
         "message": message,
@@ -230,11 +265,23 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
             if isinstance(parsed_result, dict) and "portfolio" in parsed_result:
                 portfolio = parsed_result["portfolio"]
                 
+                # Check if a specific stock was mentioned in the sell command
+                target_symbol = None
+                available_stocks = ["AAPL", "TSLA", "MSFT", "GOOGL", "NVDA"]
+                for stock_symbol in available_stocks:
+                    if stock_symbol in user_input.upper():
+                        target_symbol = stock_symbol
+                        break
+                
                 # Sell each stock one by one
                 for stock_entry in portfolio:
                     symbol = stock_entry[0]
                     quantity = stock_entry[1]
                     
+                    # If a target is specified, only sell that stock. Otherwise, sell all.
+                    if target_symbol and symbol != target_symbol:
+                        continue # Skip stocks that don't match the target
+
                     if quantity > 0:
                         print(f"🔄 Selling {quantity} shares of {symbol}...")
                         sell_result = await call_mcp_tool("sell_stock", {"symbol": symbol, "quantity": quantity})
@@ -245,7 +292,7 @@ async def get_ollama_decision(user_input: str, chat_history: ChatHistory, custom
                         log_action_for_critic(user_input, "sell_stock", {"symbol": symbol, "quantity": quantity}, sell_parsed)
                         await asyncio.sleep(0.3)  # Brief pause between sells
                 
-                print("✅ All stocks sold!")
+                print("✅ All specified stocks sold!")
         
         return parsed_result
         
@@ -356,8 +403,23 @@ if __name__ == "__main__":
     print("🚀 Trading Agent Started - Monitoring chat for trading signals...")
     print(f"📡 Chat Server: {chat_server_url}")
     print(f"📡 MCP Server: {mcp_server_url}")
+    print(f"📡 Flask Action URL: {ips.get('flask_action_url', 'http://127.0.0.1:7070/api/actor_action')}")
     print(f"⚠️  Make sure MCP server is running: python mcp_server.py --server_type sse")
+    print(f"⚠️  Make sure Flask server is running: python flask_chatroom.py")
     print()
+    
+    # Test connection to Flask server
+    try:
+        flask_action_url = ips.get("flask_action_url", "http://127.0.0.1:7070/api/actor_action")
+        test_response = requests.get(flask_action_url.replace('/actor_action', '/messages'), timeout=3)
+        if test_response.status_code == 200:
+            print("✅ Flask server connection test successful")
+        else:
+            print(f"⚠️ Flask server responded with status: {test_response.status_code}")
+    except Exception as e:
+        print(f"⚠️ Cannot connect to Flask server: {e}")
+    print()
+    
     chat_history = ChatHistory()
     asyncio.run(fetch_chats_periodically(chat_history=chat_history))
     

@@ -1,0 +1,47 @@
+[
+  {
+    "user": "Irtiza",
+    "text": "im gonna buy 20 nvidia stocks",
+    "timestamp": "2025-11-04 13:27:48"
+  },
+  {
+    "user": "Shivam",
+    "text": "Buy some tesla stocks",
+    "timestamp": "2025-11-04 13:28:19"
+  },
+  {
+    "user": "Aashish",
+    "text": "buy atleast 20 dozens of apple, it is a good investment",
+    "timestamp": "2025-11-04 13:28:45"
+  },
+  {
+    "user": "\ud83d\udee1\ufe0f GUARDIAN_AI",
+    "text": "\ud83d\udea8 TRADING ANOMALY DETECTED (MEDIUM) \ud83d\udea8\n\nOriginal Message: \"buy atleast 20 dozens of apple, it is a good investment\"\nAction Taken: buy_stock {'symbol': 'AAPL', 'quantity': 240}\n\nIssue: Quantity of 240 was inferred from the phrase '20 dozens', which is vague.\n\nRecommendation: Confirm the quantity with the user before proceeding.\n\nReact with \ud83d\udc4d if this trade was intentional\nReact with \u274c if you want to REVERSE this action immediately",
+    "timestamp": "2025-11-04 13:29:39"
+  },
+  {
+    "user": "Shivam",
+    "text": "\u274c",
+    "timestamp": "2025-11-04 13:29:50"
+  },
+  {
+    "user": "\ud83d\udee1\ufe0f GUARDIAN_AI",
+    "text": "\ud83d\udd04 Initiating trade reversal...",
+    "timestamp": "2025-11-04 13:29:50"
+  },
+  {
+    "user": "\ud83d\udee1\ufe0f GUARDIAN_AI",
+    "text": "@ACTOR_AI sell 240 AAPL shares immediately - false positive trade",
+    "timestamp": "2025-11-04 13:29:51"
+  },
+  {
+    "user": "\ud83d\udee1\ufe0f GUARDIAN_AI",
+    "text": "\u2705 Reversal command sent to Actor AI. Trade should be reversed shortly.",
+    "timestamp": "2025-11-04 13:29:53"
+  },
+  {
+    "user": "Aashish",
+    "text": "i am starting to have some thoughts of selling my tesla recently because of some issues that i am facing",
+    "timestamp": "2025-11-04 13:30:15"
+  }
+]

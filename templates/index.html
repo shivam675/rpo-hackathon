@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trading Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="dashboard">
+        <!-- Left Panel - Portfolio & Logs -->
+        <div class="left-panel">
+            <!-- Portfolio Section (40% of left panel) -->
+            <div class="portfolio-section">
+                <div class="portfolio-header">
+                    <div class="portfolio-title">
+                        <div class="portfolio-icon">💰</div>
+                        Trading Portfolio
+                    </div>
+                </div>
+                
+                <div id="portfolio-content">
+                    <div class="empty-portfolio">Loading portfolio...</div>
+                </div>
+            </div>
+            
+            <!-- Actor Logs Section (60% of left panel) -->
+            <div class="logs-section">
+                <div class="logs-header">
+                    <div class="logs-icon">🤖</div>
+                    <div class="logs-title">Actor AI Live Feed</div>
+                </div>
+                
+                <div id="logs-content">
+                    <div class="empty-logs">No activity logs yet...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Panel - Chat Room -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <div class="chat-title">
+                    <div class="chat-icon">💬</div>
+                    <div class="chat-title-text">Trading Chat</div>
+                </div>
+                <button class="reset-btn" onclick="showResetModal()">
+                    🗑️ Reset
+                </button>
+            </div>
+            
+            <div class="messages" id="messages">
+                <div class="empty-state">
+                    <div class="empty-icon">💭</div>
+                    <div>No messages yet. Start the conversation!</div>
+                </div>
+            </div>
+            
+            <div class="input-area">
+                <div class="input-row">
+                    <input type="text" id="username" placeholder="Your name" />
+                </div>
+                <div class="input-row">
+                    <input type="text" id="message" placeholder="Type your message..." />
+                    <button onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reset Modal -->
+    <div class="modal" id="resetModal">
+        <div class="modal-content">
+            <div class="modal-title">⚠️ Reset Chat History</div>
+            <input type="password" class="modal-input" id="resetPassword" placeholder="Enter password" />
+            <div class="modal-buttons">
+                <button class="modal-btn modal-btn-cancel" onclick="hideResetModal()">Cancel</button>
+                <button class="modal-btn modal-btn-confirm" onclick="confirmReset()">Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
